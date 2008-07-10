@@ -22,6 +22,7 @@ class Memcached
     :sort_hosts => false,
     :failover => false,
     :verify_key => true
+    :chunk_split_size => 1048300 # -> how close do u want to get? ;)
   } 
   
 #:stopdoc:
@@ -51,6 +52,7 @@ Valid option parameters are:
 <tt>:show_not_found_backtraces</tt>:: Whether <b>Memcached::NotFound</b> exceptions should include backtraces. Generating backtraces is slow, so this is off by default. Turn it on to ease debugging.
 <tt>:sort_hosts</tt>:: Whether to force the server list to stay sorted. This defeats consistent hashing and is rarely useful.
 <tt>:verify_key</tt>:: Validate keys before accepting them. Never disable this.
+<tt>:chunk_split_size</tt>:: size "border" at which to start splitting up "large-ticket items" (defined as "won't fit within memcached's 1MB limit") into chunks, to create a 2-level lookup scheme. At this point in time, this 2-level lookup is not transparent - you must determine beforehand whether you *want* to use this scheme to set/get an item! Eventually, this scheme should be pushed back into the "upstream" - ie., the main memcached code in C (this is planned; but no release date yet!!!). The already set recommended size is best left alone (1048300) - unless you know what you're doing with the sizes.
 
 Please note that when non-blocking IO is enabled, setter and deleter methods do not raise on errors. For example, if you try to set an invalid key with <tt>:no_block => true</tt>, it will appear to succeed. The actual setting of the key occurs after libmemcached has returned control to your program, so there is no way to backtrack and raise the exception.
 
@@ -158,6 +160,21 @@ Please note that when non-blocking IO is enabled, setter and deleter methods do 
     check_return_code(
       Lib.memcached_set(@struct, key, value, timeout, FLAGS)
     )
+  end
+
+  # same as 'set' (defined above) - except for "large-ticket items" (won't fit within the 1MB limit)
+  #
+  def big_set(key, value, timeout=0)
+    value = Marshal.dump(value)
+    i = 0; arr = []
+    chunk_split = options[:chunk_split_size]
+    while true
+      break if !(chunk = value.slice(i*chunk_split..(i*chunk_split+chunk_split-1)))
+      arr << key_i = "#{key}_#{i}"
+      set(key_i, chunk, timeout, false) #-> dont marshal it again. Note that 'check_return_code' is unnecessary - 'set' already does it for us
+      i+=1
+    end
+    set(key, arr, timeout) # !! MARSHAL!!!!
   end
 
   # Add a key/value pair. Raises <b>Memcached::NotStored</b> if the key already exists on the server. The parameters are the same as <tt>set</tt>.
@@ -290,6 +307,17 @@ Please note that when non-blocking IO is enabled, setter and deleter methods do 
     end    
   end    
   
+  # same as 'get' (defined above) - except for "large-size items" (won't fit within the 1MB limit)
+  #
+  def big_get(key)
+    arr = get(key) # !! (marshal is true)
+    ret = ""
+    arr.each do |a|
+      ret += get(a, false) #-> 'get' does 'check_return_code'....
+    end
+    Marshal.load(ret)
+  end
+
   ### Information methods
   
   # Return a Hash of statistics responses from the set of servers. Each value is an array with one entry for each server, in the same order the servers were defined.

@@ -311,11 +311,10 @@ Please note that when non-blocking IO is enabled, setter and deleter methods do 
   #
   def big_get(key)
     arr = get(key) # !! (marshal is true)
-    ret = ""
-    arr.each do |a|
-      ret += get(a, false) #-> 'get' does 'check_return_code'....
-    end
-    Marshal.load(ret)
+    found = get(arr, false)
+    raise Memcached::NotFound if found.size != arr.size
+      # -> TODO: or should we raise something else??? multiget's return behaviour's not exactly ideal here.
+    Marshal.load(found.sort.map {|v| v[1]}.to_s)
   end
 
   ### Information methods
